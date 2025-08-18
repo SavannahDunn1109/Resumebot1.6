@@ -9,6 +9,12 @@ from PyPDF2 import PdfReader
 from docx import Document
 import re
 from datetime import date
+import sys
+import streamlit as st
+
+# Show Python version in sidebar
+st.sidebar.write("🐍 Python version:", sys.version)
+
 
 # ========== CONFIG ==========
 SITE_URL = "https://eleven090.sharepoint.com/sites/Recruiting"
