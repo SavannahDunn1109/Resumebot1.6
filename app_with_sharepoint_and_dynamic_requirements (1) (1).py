@@ -21,17 +21,25 @@ SITE_URL = "https://eleven090.sharepoint.com/sites/Recruiting"
 LIBRARY = "Shared Documents"
 FOLDER = "Active Resumes"
 
+from office365.runtime.auth.user_credential import UserCredential
+from office365.sharepoint.client_context import ClientContext
+
 # ========== AUTH ==========
 @st.cache_resource
 def connect_to_sharepoint():
-    ctx_auth = AuthenticationContext(SITE_URL)
-    if not ctx_auth.acquire_token_for_user(
-        st.secrets["sharepoint"]["username"],
-        st.secrets["sharepoint"]["password"]
-    ):
-        st.error("Authentication failed")
+    try:
+        creds = UserCredential(
+            st.secrets["sharepoint"]["username"],
+            st.secrets["sharepoint"]["password"],
+        )
+        ctx = ClientContext(SITE_URL).with_credentials(creds)
+        # fail fast with a harmless call so we surface auth issues clearly
+        ctx.web.get().execute_query()
+        return ctx
+    except Exception as e:
+        st.error(f"SharePoint auth failed: {e}")
         return None
-    return ClientContext(SITE_URL, ctx_auth)
+
 
 # ========== FILE HELPERS ==========
 def download_file(ctx, file_url):
