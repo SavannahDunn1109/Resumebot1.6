@@ -3,9 +3,11 @@ pandas
 openpyxl
 python-docx
 PyPDF2
-Office365-REST-Python-Client
 # rebuild
-office365-rest-python-client==2.6.2
+office365-rest-python-client==2.5.16
 requests==2.32.4
+urllib3==2.2.2
+cryptography==42.0.8
+
 
 
