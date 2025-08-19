@@ -1,47 +1,115 @@
-import streamlit as st
-from office365.sharepoint.client_context import ClientContext
-from office365.runtime.auth.authentication_context import AuthenticationContext
-from office365.sharepoint.files.file import File
+# app_with_sharepoint_and_dynamic_requirements_azure.py
 import io
-import pandas as pd
 import os
-from PyPDF2 import PdfReader
-from docx import Document
 import re
 from datetime import date
-import sys
+
+import pandas as pd
 import streamlit as st
+from docx import Document
+from PyPDF2 import PdfReader
 
-# Show Python version in sidebar
-st.sidebar.write("🐍 Python version:", sys.version)
+# Office365/SharePoint
+from office365.sharepoint.client_context import ClientContext
+from office365.sharepoint.files.file import File
+from office365.runtime.auth.client_credential import ClientCredential
 
+# Optional (for local cookie demo)
+import browser_cookie3
 
-# ========== CONFIG ==========
+# ======================== CONFIG ========================
 SITE_URL = "https://eleven090.sharepoint.com/sites/Recruiting"
 LIBRARY = "Shared Documents"
 FOLDER = "Active Resumes"
 
-from office365.runtime.auth.user_credential import UserCredential
-from office365.sharepoint.client_context import ClientContext
+st.set_page_config(page_title="Resume Scorer from SharePoint", layout="wide")
+st.title("📄 Resume Scorer from SharePoint")
 
-# ========== AUTH ==========
-@st.cache_resource
-def connect_to_sharepoint():
+# ======================== AUTH HELPERS ========================
+@st.cache_resource(show_spinner=False)
+def connect_with_azure_app(site_url: str):
+    """
+    Azure Entra App-Only (Client Credentials).
+    Requires: app registration with Microsoft Graph permission `Sites.Selected`
+    + site-level grant to this app for the target site.
+    Place secrets in .streamlit/secrets.toml under [sharepoint_azure].
+    """
     try:
-        creds = UserCredential(
-            st.secrets["sharepoint"]["username"],
-            st.secrets["sharepoint"]["password"],
-        )
-        ctx = ClientContext(SITE_URL).with_credentials(creds)
-        # fail fast with a harmless call so we surface auth issues clearly
+        client_id = st.secrets["sharepoint_azure"]["client_id"]
+        client_secret = st.secrets["sharepoint_azure"]["client_secret"]
+        # tenant_id is not needed by the client library for SPO resource here,
+        # but we read it to ensure the secret block exists & for your reference.
+        _ = st.secrets["sharepoint_azure"].get("tenant_id", "")
+
+        creds = ClientCredential(client_id, client_secret)
+        ctx = ClientContext(site_url).with_credentials(creds)
+
+        # Prove the app has site permission (Sites.Selected + site grant)
         ctx.web.get().execute_query()
         return ctx
+    except KeyError as ke:
+        raise RuntimeError(
+            "Missing secrets. Add to .streamlit/secrets.toml:\n"
+            "[sharepoint_azure]\nclient_id=\"...\"\nclient_secret=\"...\"\ntenant_id=\"...\""
+        ) from ke
     except Exception as e:
-        st.error(f"SharePoint auth failed: {e}")
-        return None
+        raise RuntimeError(f"Azure App auth failed: {type(e).__name__}: {e}") from e
 
 
-# ========== FILE HELPERS ==========
+def _get_fedauth_rtfa():
+    """Pull FedAuth/rtFa from Chrome/Edge for *.sharepoint.com on this machine."""
+    def pick(cj):
+        fedauth = rtfa = None
+        for c in cj:
+            if c.domain.endswith("sharepoint.com"):
+                n = c.name.lower()
+                if n == "fedauth":
+                    fedauth = c.value
+                elif n == "rtfa":
+                    rtfa = c.value
+        return fedauth, rtfa
+
+    try:
+        f, r = pick(browser_cookie3.chrome(domain_name=".sharepoint.com"))
+        if f and r:
+            return f, r
+    except Exception:
+        pass
+    try:
+        f, r = pick(browser_cookie3.edge(domain_name=".sharepoint.com"))
+        if f and r:
+            return f, r
+    except Exception:
+        pass
+    return None, None
+
+
+@st.cache_resource(show_spinner=False)
+def connect_with_browser_cookies(site_url: str):
+    """
+    Use your already-signed-in browser session (MFA already done).
+    Works only on your local machine (same OS user; non‑incognito browser).
+    """
+    fedauth, rtfa = _get_fedauth_rtfa()
+    if not (fedauth and rtfa):
+        raise RuntimeError(
+            "No SharePoint cookies found. Open the site in Chrome/Edge (non‑incognito), "
+            "sign in and complete MFA, then try again."
+        )
+    ctx = ClientContext(site_url)
+
+    def _auth(req):
+        req.set_header("Cookie", f"FedAuth={fedauth}; rtFa={rtfa}")
+
+    # Monkey‑patch request auth
+    ctx.authentication_context._authenticate = _auth
+
+    # Sanity check
+    ctx.web.get().execute_query()
+    return ctx
+
+
+# ======================== FILE HELPERS ========================
 def download_file(ctx, file_url):
     response = File.open_binary(ctx, file_url)
     return io.BytesIO(response.content)
@@ -57,22 +125,15 @@ def extract_text_from_pdf(file_bytes):
 
 def extract_text_from_docx(file_bytes):
     doc = Document(file_bytes)
-    return "\n".join([para.text for para in doc.paragraphs])
+    return "\n".join([p.text for p in doc.paragraphs])
 
-# ========== EXPERIENCE HELPERS ==========
+
+# ======================== EXPERIENCE HELPERS ========================
 MONTHS = {
-    "jan": 1, "january": 1,
-    "feb": 2, "february": 2,
-    "mar": 3, "march": 3,
-    "apr": 4, "april": 4,
-    "may": 5,
-    "jun": 6, "june": 6,
-    "jul": 7, "july": 7,
-    "aug": 8, "august": 8,
-    "sep": 9, "sept": 9, "september": 9,
-    "oct": 10, "october": 10,
-    "nov": 11, "november": 11,
-    "dec": 12, "december": 12,
+    "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
+    "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7,
+    "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9, "oct": 10, "october": 10,
+    "nov": 11, "november": 11, "dec": 12, "december": 12,
 }
 
 def _mk_date(y: int, m: int) -> date:
@@ -82,8 +143,7 @@ def _mk_date(y: int, m: int) -> date:
 def _parse_month(token: str):
     if not token:
         return None
-    t = token.strip().lower()
-    return MONTHS.get(t)
+    return MONTHS.get(token.strip().lower())
 
 def _parse_year(token: str):
     if not token:
@@ -104,17 +164,14 @@ def _extract_date_ranges(text: str):
         flags=re.I
     )
     for m in pat_month_year.finditer(t):
-        m1 = _parse_month(m.group("m1"))
-        y1 = _parse_year(m.group("y1"))
-        m2tok = m.group("m2")
-        y2tok = m.group("y2")
+        m1 = _parse_month(m.group("m1")); y1 = _parse_year(m.group("y1"))
+        m2tok = m.group("m2"); y2tok = m.group("y2")
         if m1 and y1:
             start = _mk_date(y1, m1)
             if m2tok and m2tok.lower() in ("present", "current"):
                 end = _present_to_date()
             else:
-                m2 = _parse_month(m2tok)
-                y2 = _parse_year(y2tok) if y2tok else None
+                m2 = _parse_month(m2tok); y2 = _parse_year(y2tok) if y2tok else None
                 if m2 and y2:
                     end = _mk_date(y2, m2)
                 else:
@@ -127,16 +184,15 @@ def _extract_date_ranges(text: str):
         flags=re.I
     )
     for m in pat_year_year.finditer(t):
-        y1 = _parse_year(m.group("y1"))
-        y2tok = m.group("y2")
+        y1 = _parse_year(m.group("y1")); y2tok = m.group("y2")
         if not y1:
             continue
         start = _mk_date(y1, 6)
         if y2tok.lower() in ("present", "current"):
             end = _present_to_date()
         else:
-            y2 = _parse_year(y2tok)
-            if not y2:
+            y2 = _parse_year(y2tok); 
+            if not y2: 
                 continue
             end = _mk_date(y2, 6)
         if end > start:
@@ -147,8 +203,7 @@ def _extract_date_ranges(text: str):
         flags=re.I
     )
     for m in pat_mmyyyy.finditer(t):
-        m1 = int(m.group("m1"))
-        y1 = _parse_year(m.group("y1"))
+        m1 = int(m.group("m1")); y1 = _parse_year(m.group("y1"))
         if not (y1 and 1 <= m1 <= 12):
             continue
         start = _mk_date(y1, m1)
@@ -156,8 +211,7 @@ def _extract_date_ranges(text: str):
         if y2raw.lower() in ("present", "current"):
             end = _present_to_date()
         else:
-            m2 = int(m.group("m2"))
-            y2 = _parse_year(y2raw)
+            m2 = int(m.group("m2")); y2 = _parse_year(y2raw)
             if not (y2 and 1 <= m2 <= 12):
                 continue
             end = _mk_date(y2, m2)
@@ -205,7 +259,8 @@ def classify_level(years: float, jr_max: int, mid_max: int) -> str:
     else:
         return "Senior"
 
-# ========== SCORING ==========
+
+# ======================== REQUIREMENTS & SCORING ========================
 uploaded_req_file = st.file_uploader("📄 Upload Requirements (.txt)", type=["txt"])
 
 KEYWORDS = []
@@ -213,7 +268,7 @@ if uploaded_req_file:
     req_lines = uploaded_req_file.read().decode("utf-8").splitlines()
     for line in req_lines:
         line = line.strip()
-        if line and not any(line.startswith(prefix) for prefix in ("🧠", "💼", "🛡", "⚙️", "☁️", "👥", "🎯", "🧾", "🧩")):
+        if line and not any(line.startswith(prefix) for prefix in ("🧠","💼","🛡","⚙️","☁️","👥","🎯","🧾","🧩")):
             if not line.endswith(":"):
                 KEYWORDS.append(line)
     st.success(f"✅ Loaded {len(KEYWORDS)} keywords from requirements file.")
@@ -221,13 +276,12 @@ else:
     st.warning("⚠️ Please upload a requirements .txt file to begin scoring.")
     st.stop()
 
-# Scoring & filters UI
 st.subheader("⚙️ Scoring & Filters")
-exp_points_per_year = st.number_input("Points per year of experience", min_value=0, max_value=50, value=5, step=1)
-jr_max = st.number_input("Max years for JUNIOR", min_value=0, max_value=10, value=2, step=1)
-mid_max = st.number_input("Max years for MID", min_value=jr_max, max_value=25, value=6, step=1)
+exp_points_per_year = st.number_input("Points per year of experience", 0, 50, 5, 1)
+jr_max = st.number_input("Max years for JUNIOR", 0, 10, 2, 1)
+mid_max = st.number_input("Max years for MID", jr_max, 25, 6, 1)
 enforce_min = st.checkbox("Enforce minimum years of experience filter?", value=False)
-min_years_required = st.number_input("Minimum years (hide resumes below this)", min_value=0, max_value=30, value=3, step=1)
+min_years_required = st.number_input("Minimum years (hide resumes below this)", 0, 30, 3, 1)
 
 def score_resume(text: str):
     kw_score = 0
@@ -252,22 +306,53 @@ def score_resume(text: str):
         "keywords_found": ", ".join(found_keywords),
     }
 
-# ========== MAIN STREAMLIT APP ==========
-st.title("📄 Resume Scorer from SharePoint")
+# ======================== MODE & CONNECTION ========================
+st.sidebar.markdown("### Run mode")
+mode = st.sidebar.radio(
+    "Choose how to connect",
+    ["Azure App (client secret)", "Local (browser cookies)", "Demo (no SharePoint)"],
+    index=0
+)
 
-ctx = connect_to_sharepoint()
+ctx = None
+if mode == "Azure App (client secret)":
+    try:
+        with st.spinner("Connecting to SharePoint with Azure App…"):
+            ctx = connect_with_azure_app(SITE_URL)
+        st.success("✅ Connected via Azure App")
+    except Exception as e:
+        st.error(str(e))
+        st.stop()
+
+elif mode == "Local (browser cookies)":
+    if st.button("🔐 Connect using my browser session"):
+        try:
+            with st.spinner("Connecting via your browser session…"):
+                ctx = connect_with_browser_cookies(SITE_URL)
+            st.session_state.ctx = ctx
+            st.success("✅ Connected with browser cookies")
+        except Exception as e:
+            st.error(f"❌ Connect failed: {e}")
+    ctx = st.session_state.get("ctx")
+
+else:
+    st.info("🎬 Demo mode: Not connecting to SharePoint. Upload or test locally below.")
+
+# ======================== MAIN: LIST, SCORE, EXPORT ========================
+data = []
+
 if ctx:
-    folder_url = f"{LIBRARY}/{FOLDER}"
-    folder = ctx.web.get_folder_by_server_relative_url(folder_url)
-    files = folder.files
-    ctx.load(files)
-    ctx.execute_query()
+    try:
+        folder_url = f"{LIBRARY}/{FOLDER}"
+        folder = ctx.web.get_folder_by_server_relative_url(folder_url)
+        files = folder.files
+        ctx.load(files); ctx.execute_query()
 
-    data = []
+        for file in files:
+            filename = file.properties["Name"]
+            if not filename.lower().endswith((".pdf", ".docx")):
+                continue
 
-    for file in files:
-        filename = file.properties["Name"]
-        if filename.lower().endswith(".pdf") or filename.lower().endswith(".docx"):
             file_url = file.properties["ServerRelativeUrl"]
             file_bytes = download_file(ctx, file_url)
 
@@ -290,28 +375,29 @@ if ctx:
                 "Total Score": result["total"],
                 "Keywords Found": result["keywords_found"],
             })
+    except Exception as e:
+        st.error(f"Error reading SharePoint folder: {e}")
 
-    df = pd.DataFrame(data)
-    if not df.empty:
-        df = df.sort_values(
-            ["Level (Jr/Mid/Sr)", "Est. Years", "Total Score"],
-            ascending=[True, False, False]
-        ).reset_index(drop=True)
-    st.dataframe(df)
+df = pd.DataFrame(data)
+if not df.empty:
+    df = df.sort_values(
+        ["Level (Jr/Mid/Sr)", "Est. Years", "Total Score"],
+        ascending=[True, False, False]
+    ).reset_index(drop=True)
 
-    if not df.empty:
-        output = io.BytesIO()
-        df.to_excel(output, index=False)
-        output.seek(0)
-        st.download_button("📥 Download Excel Report", output, file_name="resume_scores.xlsx")
+st.dataframe(df, use_container_width=True)
 
-        # Upload Excel back to SharePoint
-        if st.button("📤 Upload Excel to SharePoint"):
-            upload_path = f"{LIBRARY}/resume_scores.xlsx"
+if not df.empty:
+    output = io.BytesIO()
+    df.to_excel(output, index=False)
+    output.seek(0)
+    st.download_button("📥 Download Excel Report", output, file_name="resume_scores.xlsx")
+
+    if ctx and st.button("📤 Upload Excel to SharePoint"):
+        try:
             target_folder = ctx.web.get_folder_by_server_relative_url(LIBRARY)
             target_folder.upload_file("resume_scores.xlsx", output)
             ctx.execute_query()
             st.success("Excel uploaded to SharePoint!")
-
-
-
+        except Exception as e:
+            st.error(f"Upload failed: {e}")
