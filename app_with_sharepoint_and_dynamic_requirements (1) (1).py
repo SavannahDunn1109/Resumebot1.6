@@ -12,7 +12,6 @@ from PyPDF2 import PdfReader
 # Office365/SharePoint
 from office365.sharepoint.client_context import ClientContext
 from office365.sharepoint.files.file import File
-from office365.runtime.auth.client_credential import ClientCredential
 
 # ======================== CONFIG ========================
 SITE_URL = "https://eleven090.sharepoint.com/sites/Recruiting"
@@ -26,29 +25,46 @@ st.title("📄 Resume Scorer from SharePoint")
 @st.cache_resource(show_spinner=False)
 def connect_with_azure_app(site_url: str):
     """
-    Azure Entra App-Only (Client Credentials).
-    Requires: app registration with SharePoint permission `Sites.Selected`
-    + site-level grant to this app for the target site.
-    Place secrets in .streamlit/secrets.toml under [sharepoint_azure].
+    Azure Entra App-Only (Client Credentials) using SharePoint resource.
+    Requires: SharePoint → Application permission → Sites.Selected (admin consented)
+    AND a site-level grant (Read/Write) for this app on the target site.
+    Secrets: .streamlit/secrets.toml under [sharepoint_azure].
     """
     try:
         client_id = st.secrets["sharepoint_azure"]["client_id"]
         client_secret = st.secrets["sharepoint_azure"]["client_secret"]
-        _ = st.secrets["sharepoint_azure"].get("tenant_id", "")  # optional but helpful
-
-        creds = ClientCredential(client_id, client_secret)
-        ctx = ClientContext(site_url).with_credentials(creds)
-
-        # Prove the app has site permission (Sites.Selected + site grant)
+        # Use the library's native helper to target SPO audience
+        ctx = ClientContext(site_url).with_client_credentials(client_id, client_secret)
+        # Sanity check round-trip
         ctx.web.get().execute_query()
         return ctx
     except KeyError as ke:
         raise RuntimeError(
-            "Missing secrets. Add to .streamlit/secrets.toml:\n"
-            "[sharepoint_azure]\nclient_id=\"...\"\nclient_secret=\"...\"\ntenant_id=\"...\""
+            "Missing secrets. Add to .streamlit/secrets.toml:
+"
+            "[sharepoint_azure]
+client_id=\"...\"
+client_secret=\"...\"
+tenant_id=\"...\" (optional)"
         ) from ke
     except Exception as e:
-        raise RuntimeError(f"Azure App auth failed: {type(e).__name__}: {e}") from e
+        # Make the common 401 causes obvious
+        msg = (
+            f"Azure App auth failed: {type(e).__name__}: {e}
+
+"
+            "Most common fixes:
+"
+            " • Wrong client secret (use the *Value*, not Secret ID).
+"
+            " • App missing SharePoint → Sites.Selected (Application) with Admin consent.
+"
+            " • Site grant missing: run Grant-PnPAzureADAppSitePermission for this app/site.
+"
+            " • AppId mismatch: ensure client_id is your ResumeScorer app, not the PnP app.
+"
+        )
+        raise RuntimeError(msg) from e
 
 # --- Local-only cookie-based SharePoint connector (optional / lazy import) ---
 import importlib
