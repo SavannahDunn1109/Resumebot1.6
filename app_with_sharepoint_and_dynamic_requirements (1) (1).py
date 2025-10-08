@@ -27,16 +27,14 @@ st.title("📄 Resume Scorer from SharePoint")
 def connect_with_azure_app(site_url: str):
     """
     Azure Entra App-Only (Client Credentials).
-    Requires: app registration with Microsoft Graph permission `Sites.Selected`
+    Requires: app registration with SharePoint permission `Sites.Selected`
     + site-level grant to this app for the target site.
     Place secrets in .streamlit/secrets.toml under [sharepoint_azure].
     """
     try:
         client_id = st.secrets["sharepoint_azure"]["client_id"]
         client_secret = st.secrets["sharepoint_azure"]["client_secret"]
-        # tenant_id is not needed by the client library for SPO resource here,
-        # but we read it to ensure the secret block exists & for your reference.
-        _ = st.secrets["sharepoint_azure"].get("tenant_id", "")
+        _ = st.secrets["sharepoint_azure"].get("tenant_id", "")  # optional but helpful
 
         creds = ClientCredential(client_id, client_secret)
         ctx = ClientContext(site_url).with_credentials(creds)
@@ -51,6 +49,7 @@ def connect_with_azure_app(site_url: str):
         ) from ke
     except Exception as e:
         raise RuntimeError(f"Azure App auth failed: {type(e).__name__}: {e}") from e
+
 # --- Local-only cookie-based SharePoint connector (optional / lazy import) ---
 import importlib
 
@@ -75,19 +74,23 @@ def _get_fedauth_rtfa():
         for c in cj:
             if c.domain.endswith("sharepoint.com"):
                 n = c.name.lower()
-                if n == "fedauth": fedauth = c.value
-                elif n == "rtfa":  rtfa = c.value
+                if n == "fedauth":
+                    fedauth = c.value
+                elif n == "rtfa":
+                    rtfa = c.value
         return fedauth, rtfa
 
     # Try Chrome then Edge
     try:
         f, r = pick(browser_cookie3.chrome(domain_name=".sharepoint.com"))
-        if f and r: return f, r
+        if f and r:
+            return f, r
     except Exception:
         pass
     try:
         f, r = pick(browser_cookie3.edge(domain_name=".sharepoint.com"))
-        if f and r: return f, r
+        if f and r:
+            return f, r
     except Exception:
         pass
     return None, None
@@ -97,74 +100,19 @@ def connect_with_browser_cookies(site_url: str):
     fedauth, rtfa = _get_fedauth_rtfa()
     if not (fedauth and rtfa):
         raise RuntimeError(
-            "No SharePoint cookies found. Open the site in Chrome/Edge (non-incognito), "
-            "sign in and complete MFA, then try again."
-        )
-
-    from office365.sharepoint.client_context import ClientContext
-    ctx = ClientContext(site_url)
-
-    def _auth(req):
-        req.set_header("Cookie", f"FedAuth={fedauth}; rtFa={rtfa}")
-
-    # Monkey-patch request auth and sanity-check
-    ctx.authentication_context._authenticate = _auth
-    ctx.web.get().execute_query()
-    return ctx
-
-
-def _get_fedauth_rtfa():
-    """Pull FedAuth/rtFa from Chrome/Edge for *.sharepoint.com on this machine."""
-    def pick(cj):
-        fedauth = rtfa = None
-        for c in cj:
-            if c.domain.endswith("sharepoint.com"):
-                n = c.name.lower()
-                if n == "fedauth":
-                    fedauth = c.value
-                elif n == "rtfa":
-                    rtfa = c.value
-        return fedauth, rtfa
-
-    try:
-        f, r = pick(browser_cookie3.chrome(domain_name=".sharepoint.com"))
-        if f and r:
-            return f, r
-    except Exception:
-        pass
-    try:
-        f, r = pick(browser_cookie3.edge(domain_name=".sharepoint.com"))
-        if f and r:
-            return f, r
-    except Exception:
-        pass
-    return None, None
-
-
-@st.cache_resource(show_spinner=False)
-def connect_with_browser_cookies(site_url: str):
-    """
-    Use your already-signed-in browser session (MFA already done).
-    Works only on your local machine (same OS user; non‑incognito browser).
-    """
-    fedauth, rtfa = _get_fedauth_rtfa()
-    if not (fedauth and rtfa):
-        raise RuntimeError(
             "No SharePoint cookies found. Open the site in Chrome/Edge (non‑incognito), "
             "sign in and complete MFA, then try again."
         )
+
     ctx = ClientContext(site_url)
 
     def _auth(req):
         req.set_header("Cookie", f"FedAuth={fedauth}; rtFa={rtfa}")
 
-    # Monkey‑patch request auth
+    # Monkey‑patch request auth and sanity-check
     ctx.authentication_context._authenticate = _auth
-
-    # Sanity check
     ctx.web.get().execute_query()
     return ctx
-
 
 # ======================== FILE HELPERS ========================
 def download_file(ctx, file_url):
@@ -183,7 +131,6 @@ def extract_text_from_pdf(file_bytes):
 def extract_text_from_docx(file_bytes):
     doc = Document(file_bytes)
     return "\n".join([p.text for p in doc.paragraphs])
-
 
 # ======================== EXPERIENCE HELPERS ========================
 MONTHS = {
@@ -316,7 +263,6 @@ def classify_level(years: float, jr_max: int, mid_max: int) -> str:
     else:
         return "Senior"
 
-
 # ======================== REQUIREMENTS & SCORING ========================
 uploaded_req_file = st.file_uploader("📄 Upload Requirements (.txt)", type=["txt"])
 
@@ -367,7 +313,7 @@ def score_resume(text: str):
 st.sidebar.markdown("### Run mode")
 mode = st.sidebar.radio(
     "Choose how to connect",
-    ["Azure App (client secret)", "Local (browser cookies)", "Demo (no SharePoint)"],
+    (["Azure App (client secret)", "Demo (no SharePoint)"] + (["Local (browser cookies)"] if _browser_cookie_available() else [])),
     index=0
 )
 
