@@ -39,14 +39,13 @@ def connect_with_azure_app(site_url: str):
         ctx.web.get().execute_query()
         return ctx
     except KeyError as ke:
-    raise RuntimeError(
-        """Missing secrets. Add to .streamlit/secrets.toml:
-
-[sharepoint_azure]
-tenant_id     = "eleven-09.com"     # or your Tenant GUID
-client_id     = "d84d447c-ccf0-4085-8083-922bc12d575e"
-client_secret = "<YOUR_CLIENT_SECRET_VALUE>"
-"""
+    rraise RuntimeError(
+    "Missing secrets. Add to .streamlit/secrets.toml:\n"
+    "[sharepoint_azure]\n"
+    'tenant_id = "eleven-09.com"\n'
+    'client_id = "d84d447c-ccf0-4085-8083-922bc12d575e"\n'
+    'client_secret = "<YOUR_CLIENT_SECRET_VALUE>"\n'
+)
     ) from ke
 
     except Exception as e:
