@@ -14,9 +14,6 @@ from office365.sharepoint.client_context import ClientContext
 from office365.sharepoint.files.file import File
 from office365.runtime.auth.client_credential import ClientCredential
 
-# Optional (for local cookie demo)
-import browser_cookie3
-
 # ======================== CONFIG ========================
 SITE_URL = "https://eleven090.sharepoint.com/sites/Recruiting"
 LIBRARY = "Shared Documents"
@@ -54,6 +51,66 @@ def connect_with_azure_app(site_url: str):
         ) from ke
     except Exception as e:
         raise RuntimeError(f"Azure App auth failed: {type(e).__name__}: {e}") from e
+# --- Local-only cookie-based SharePoint connector (optional / lazy import) ---
+import importlib
+
+def _browser_cookie_available() -> bool:
+    return importlib.util.find_spec("browser_cookie3") is not None
+
+def _get_fedauth_rtfa():
+    """
+    Read FedAuth/rtFa from Chrome/Edge only if browser_cookie3 is present.
+    Raises a friendly error if not installed (e.g., Streamlit Cloud).
+    """
+    if not _browser_cookie_available():
+        raise RuntimeError(
+            "Local (browser cookies) mode requires the 'browser-cookie3' package, "
+            "which isn't available here. Use 'Azure App (client secret)' instead, "
+            "or install it locally with: pip install browser-cookie3"
+        )
+
+    import browser_cookie3  # lazy import
+    def pick(cj):
+        fedauth = rtfa = None
+        for c in cj:
+            if c.domain.endswith("sharepoint.com"):
+                n = c.name.lower()
+                if n == "fedauth": fedauth = c.value
+                elif n == "rtfa":  rtfa = c.value
+        return fedauth, rtfa
+
+    # Try Chrome then Edge
+    try:
+        f, r = pick(browser_cookie3.chrome(domain_name=".sharepoint.com"))
+        if f and r: return f, r
+    except Exception:
+        pass
+    try:
+        f, r = pick(browser_cookie3.edge(domain_name=".sharepoint.com"))
+        if f and r: return f, r
+    except Exception:
+        pass
+    return None, None
+
+def connect_with_browser_cookies(site_url: str):
+    """Use your existing browser session (MFA already done). Local dev only."""
+    fedauth, rtfa = _get_fedauth_rtfa()
+    if not (fedauth and rtfa):
+        raise RuntimeError(
+            "No SharePoint cookies found. Open the site in Chrome/Edge (non-incognito), "
+            "sign in and complete MFA, then try again."
+        )
+
+    from office365.sharepoint.client_context import ClientContext
+    ctx = ClientContext(site_url)
+
+    def _auth(req):
+        req.set_header("Cookie", f"FedAuth={fedauth}; rtFa={rtfa}")
+
+    # Monkey-patch request auth and sanity-check
+    ctx.authentication_context._authenticate = _auth
+    ctx.web.get().execute_query()
+    return ctx
 
 
 def _get_fedauth_rtfa():
