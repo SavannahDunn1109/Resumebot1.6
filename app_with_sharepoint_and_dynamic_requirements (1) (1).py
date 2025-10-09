@@ -43,7 +43,7 @@ def connect_with_azure_app(site_url: str):
             "Missing secrets. Add to .streamlit/secrets.toml:\n"
             "[sharepoint_azure]\n"
             'tenant_id = "eleven-09.com"\n'
-            'client_id = "d84d447c-ccf0-4085-8083-922bc12d575e"\n'
+            'client_id = "090e3e87-bef3-45b7-b27c-57f5cee20845'
             'client_secret = "<YOUR_CLIENT_SECRET_VALUE>"\n'
         )
         raise RuntimeError(msg)
