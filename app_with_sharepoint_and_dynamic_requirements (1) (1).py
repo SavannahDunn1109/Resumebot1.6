@@ -25,47 +25,40 @@ st.title("📄 Resume Scorer from SharePoint")
 @st.cache_resource(show_spinner=False)
 def connect_with_azure_app(site_url: str):
     """
-    Azure Entra App-Only (Client Credentials) using SharePoint resource.
-    Requires: SharePoint → Application permission → Sites.Selected (admin consented)
-    AND a site-level grant (Read/Write) for this app on the target site.
-    Secrets: .streamlit/secrets.toml under [sharepoint_azure].
+    Azure Entra App-Only (client credentials) to SharePoint.
+    Requires: SharePoint → Sites.Selected (Application) + site-level grant.
     """
     try:
-        client_id = st.secrets["sharepoint_azure"]["client_id"]
-        client_secret = st.secrets["sharepoint_azure"]["client_secret"]
-        # Use the library's native helper to target SPO audience
+        secrets = st.secrets.get("sharepoint_azure", {})
+        client_id = secrets["client_id"]
+        client_secret = secrets["client_secret"]
+
+        # Auth: target SharePoint audience directly
         ctx = ClientContext(site_url).with_client_credentials(client_id, client_secret)
-        # Sanity check round-trip
-        ctx.web.get().execute_query()
+        ctx.web.get().execute_query()  # sanity check round-trip
         return ctx
-    except KeyError as ke:
-    rraise RuntimeError(
-    "Missing secrets. Add to .streamlit/secrets.toml:\n"
-    "[sharepoint_azure]\n"
-    'tenant_id = "eleven-09.com"\n'
-    'client_id = "d84d447c-ccf0-4085-8083-922bc12d575e"\n'
-    'client_secret = "<YOUR_CLIENT_SECRET_VALUE>"\n'
-)
-    ) from ke
+
+    except KeyError:
+        msg = (
+            "Missing secrets. Add to .streamlit/secrets.toml:\n"
+            "[sharepoint_azure]\n"
+            'tenant_id = "eleven-09.com"\n'
+            'client_id = "d84d447c-ccf0-4085-8083-922bc12d575e"\n'
+            'client_secret = "<YOUR_CLIENT_SECRET_VALUE>"\n'
+        )
+        raise RuntimeError(msg)
 
     except Exception as e:
-        # Make the common 401 causes obvious
         msg = (
-            f"Azure App auth failed: {type(e).__name__}: {e}
-
-"
-            "Most common fixes:
-"
-            " • Wrong client secret (use the *Value*, not Secret ID).
-"
-            " • App missing SharePoint → Sites.Selected (Application) with Admin consent.
-"
-            " • Site grant missing: run Grant-PnPAzureADAppSitePermission for this app/site.
-"
-            " • AppId mismatch: ensure client_id is your ResumeScorer app, not the PnP app.
-"
+            f"Azure App auth failed: {type(e).__name__}: {e}\n\n"
+            "Most common fixes:\n"
+            " • Wrong client secret (use the *Value*, not Secret ID).\n"
+            " • App missing SharePoint → Sites.Selected (Application) with Admin consent.\n"
+            " • Site grant missing: Grant-PnPAzureADAppSitePermission for this app/site.\n"
+            " • AppId mix-up: use your ResumeScorer app client_id, not the PnP app.\n"
         )
-        raise RuntimeError(msg) from e
+        raise RuntimeError(msg)
+
 
 # --- Local-only cookie-based SharePoint connector (optional / lazy import) ---
 import importlib
