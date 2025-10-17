@@ -37,17 +37,18 @@ def connect_with_azure_app(site_url: str):
         ctx = ClientContext(site_url).with_client_credentials(client_id, client_secret)
         ctx.web.get().execute_query()  # sanity check round-trip
         return ctx
+   
+    except KeyError:
+        msg = (
+            "Missing secrets. Add to .streamlit/secrets.toml:\n"
+            "[sharepoint_azure]\n"
+            'tenant_id = "b7c46a1e-ef8c-4ba8-aeaf-0a29d31fb1be"\n'
+            'client_id = "090e3e87-bef3-45b7-b27c-57f5cee20845"\n'
+            'client_secret = "<YOUR_CLIENT_SECRET_VALUE>"\n'
+            'site_url = "https://eleven090.sharepoint.com/sites/Recruiting"\n'
+        )
+        raise RuntimeError(msg)
 
-   except KeyError:
-    msg = (
-        "Missing secrets. Add to .streamlit/secrets.toml:\n"
-        "[sharepoint_azure]\n"
-        'tenant_id = "b7c46a1e-ef8c-4ba8-aeaf-0a29d31fb1be"\n'
-        'client_id = "090e3e87-bef3-45b7-b27c-57f5cee20845"\n'
-        'client_secret = "<YOUR_CLIENT_SECRET_VALUE>"\n'
-        'site_url = "https://eleven090.sharepoint.com/sites/Recruiting"\n'
-    )
-    raise RuntimeError(msg)
 
     except Exception as e:
         msg = (
