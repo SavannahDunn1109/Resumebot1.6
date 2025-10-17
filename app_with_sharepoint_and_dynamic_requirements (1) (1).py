@@ -30,14 +30,25 @@ def connect_with_azure_app(site_url: str):
     """
     try:
         secrets = st.secrets.get("sharepoint_azure", {})
-        client_id = secrets["client_id"]
-        client_secret = secrets["client_secret"]
+        tenant_id = secrets.get("tenant_id", "<missing>")
+        client_id = secrets.get("client_id", "<missing>")
+        client_secret = secrets.get("client_secret", "<missing>")
+        site_url = secrets.get("site_url", site_url)
+
+        # 🧭 Debug info (prints to Streamlit)
+        st.write("🔍 DEBUG INFO — Secrets being used:")
+        st.write({
+            "tenant_id": tenant_id,
+            "client_id": client_id,
+            "client_secret_length": len(client_secret),
+            "site_url": site_url,
+        })
 
         # Auth: target SharePoint audience directly
         ctx = ClientContext(site_url).with_client_credentials(client_id, client_secret)
         ctx.web.get().execute_query()  # sanity check round-trip
         return ctx
-   
+
     except KeyError:
         msg = (
             "Missing secrets. Add to .streamlit/secrets.toml:\n"
@@ -48,7 +59,6 @@ def connect_with_azure_app(site_url: str):
             'site_url = "https://eleven090.sharepoint.com/sites/Recruiting"\n'
         )
         raise RuntimeError(msg)
-
 
     except Exception as e:
         msg = (
