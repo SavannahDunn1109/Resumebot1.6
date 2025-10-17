@@ -9,6 +9,12 @@ import streamlit as st
 from docx import Document
 from PyPDF2 import PdfReader
 
+import os, re, streamlit as st
+
+suspect = {k:v for k,v in os.environ.items()
+           if re.search(r"(TENANT|AUTHORITY|O365|AZURE|MSAL)", k, re.I)}
+st.write("🔎 ENV (filtered):", suspect)
+
 # Office365/SharePoint
 from office365.sharepoint.client_context import ClientContext
 from office365.sharepoint.files.file import File
